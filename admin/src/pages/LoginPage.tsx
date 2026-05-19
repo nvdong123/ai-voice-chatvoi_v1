@@ -30,10 +30,10 @@ export default function LoginPage() {
           {/* Logo */}
           <div className="mb-7 text-center">
             <span className="inline-flex h-14 w-14 items-center justify-center rounded-2xl bg-gradient-to-br from-teal-400 to-cyan-400 text-2xl shadow-lg">
-              🏔️
+              �
             </span>
             <h1 className="mt-4 text-xl font-bold text-gray-100">VR 360 Admin</h1>
-            <p className="mt-1 text-sm text-gray-500">Lâm Đồng Tourism Platform</p>
+            <p className="mt-1 text-sm text-gray-500">Bất Động Sản Platform</p>
           </div>
 
           {/* Form */}

@@ -1,0 +1,11 @@
+.env
+.env.*
+!.env.example
+__pycache__/
+*.pyc
+*.pyo
+*.log
+admin/node_modules/
+admin-dist/
+.git/
+.gitignore

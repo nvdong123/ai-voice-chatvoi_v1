@@ -74,7 +74,7 @@ class RAGEngine:
         except ImportError:
             from langchain_community.vectorstores import Chroma
 
-        model = os.getenv("RAG_EMBEDDING_MODEL", "models/text-embedding-004")
+        model = os.getenv("RAG_EMBEDDING_MODEL", "gemini-embedding-001")
         self._embeddings = _GeminiEmbeddings(
             model=model,
             api_key=os.getenv("GEMINI_API_KEY", _GEMINI_API_KEY),

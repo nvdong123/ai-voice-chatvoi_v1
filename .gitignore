@@ -5,3 +5,8 @@ __pycache__/
 *.log
 admin/node_modules/
 admin-dist/
+# Firebase service account key
+firebase-service-account.json
+# RAG persistent storage
+data/chroma_db/
+data/rag_docs/

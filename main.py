@@ -25,6 +25,8 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.security import HTTPBasic, HTTPBasicCredentials
 
 from gemini_live import GeminiLive
+from rag import RAGEngine
+from chat_history import ChatHistory
 from tools import (
     build_navigate_tool, navigate_property_scene,
     build_get_property_info_tool, get_property_info,
@@ -86,6 +88,10 @@ def load_prompt() -> str:
 SYSTEM_PROMPT = load_prompt()
 _INITIAL_PROMPT = SYSTEM_PROMPT
 logger.info("System prompt loaded (%d chars)", len(SYSTEM_PROMPT))
+
+# ─── RAG engine + Chat history (module-level singletons) ─────────────────────
+rag_engine   = RAGEngine()
+chat_history = ChatHistory()
 
 # ─── Tool setup ───────────────────────────────────────────────────────────────
 NAVIGATE_TOOL          = build_navigate_tool()
@@ -461,6 +467,110 @@ async def delete_node(node_id: str, _: None = Depends(verify_admin)):
     return JSONResponse({"ok": True})
 
 
+# ─── Admin: RAG documents ─────────────────────────────────────────────────────
+@app.get("/admin/rag/documents")
+async def rag_list_documents(request: Request, _: None = Depends(verify_admin)):
+    if not _is_api_request(request):
+        return _spa_response()
+    return JSONResponse(rag_engine.list_documents())
+
+
+@app.post("/admin/rag/upload")
+async def rag_upload(
+    request: Request,
+    _: None = Depends(verify_admin),
+):
+    from fastapi import UploadFile
+    import shutil
+
+    MAX_BYTES = 20 * 1024 * 1024  # 20 MB
+    ALLOWED_EXTS = {".pdf", ".docx", ".csv", ".xlsx", ".xls", ".txt"}
+
+    form = await request.form()
+    file: UploadFile = form.get("file")  # type: ignore
+    if file is None:
+        raise HTTPException(status_code=400, detail="No file field in form")
+
+    from pathlib import Path as _Path
+    ext = _Path(file.filename or "").suffix.lower()
+    if ext not in ALLOWED_EXTS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTS))}",
+        )
+
+    dest_dir = _Path(os.getenv("RAG_DOCS_DIR", "./data/rag_docs"))
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / (file.filename or "upload")
+
+    size = 0
+    with dest.open("wb") as out:
+        while True:
+            chunk = await file.read(64 * 1024)
+            if not chunk:
+                break
+            size += len(chunk)
+            if size > MAX_BYTES:
+                dest.unlink(missing_ok=True)
+                raise HTTPException(status_code=413, detail="File exceeds 20 MB limit")
+            out.write(chunk)
+
+    result = rag_engine.ingest_file(dest, file.filename or dest.name)
+    return JSONResponse(result, status_code=201)
+
+
+@app.delete("/admin/rag/documents/{filename:path}")
+async def rag_delete_document(
+    filename: str,
+    request: Request,
+    _: None = Depends(verify_admin),
+):
+    from pathlib import Path as _Path
+    result = rag_engine.delete_file(filename)
+    # Also remove physical file if it exists
+    dest_dir = _Path(os.getenv("RAG_DOCS_DIR", "./data/rag_docs"))
+    phys = dest_dir / filename
+    if phys.exists():
+        phys.unlink()
+    return JSONResponse({"ok": True, **result})
+
+
+# ─── Admin: chat history ──────────────────────────────────────────────────────
+@app.get("/admin/history")
+async def history_list(
+    request: Request,
+    limit: int = 50,
+    project: str = "",
+    _: None = Depends(verify_admin),
+):
+    if not _is_api_request(request):
+        return _spa_response()
+    sessions = await chat_history.list_sessions(
+        limit=limit,
+        project=project or None,
+    )
+    return JSONResponse(sessions)
+
+
+@app.get("/admin/history/{session_id}")
+async def history_get(
+    session_id: str,
+    _: None = Depends(verify_admin),
+):
+    messages = await chat_history.get_history(session_id)
+    return JSONResponse({"session_id": session_id, "messages": messages})
+
+
+@app.delete("/admin/history/{session_id}")
+async def history_delete(
+    session_id: str,
+    _: None = Depends(verify_admin),
+):
+    ok = await chat_history.delete_session(session_id)
+    return JSONResponse({"ok": ok})
+
+
+# ─── SPA catch-all: must be the LAST GET route under /admin/ ─────────────────
 @app.get("/admin/{full_path:path}")
 async def admin_spa_fallback(full_path: str, request: Request):
     return _spa_response()
@@ -470,8 +580,16 @@ async def admin_spa_fallback(full_path: str, request: Request):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for Gemini Live AI voice chat."""
+    # Resolve or create session ID
+    session_id: str = (
+        websocket.query_params.get("session_id") or secrets.token_urlsafe(16)
+    )
+
     await websocket.accept()
-    logger.info("WebSocket connection accepted")
+    logger.info("WebSocket connection accepted (session=%s)", session_id)
+
+    # Inform client of their session ID immediately
+    await websocket.send_json({"type": "session_info", "session_id": session_id})
 
     audio_input_queue: asyncio.Queue = asyncio.Queue()
     video_input_queue: asyncio.Queue = asyncio.Queue()
@@ -505,11 +623,21 @@ async def websocket_endpoint(websocket: WebSocket):
         "get_pano_nodeid": _get_pano_nodeid_session,
     }
 
+    # Inject RAG context into system prompt for this session
+    effective_prompt = SYSTEM_PROMPT
+    try:
+        if rag_engine.has_documents():
+            rag_ctx = rag_engine.get_all_context()
+            if rag_ctx:
+                effective_prompt = SYSTEM_PROMPT + "\n\n" + rag_ctx
+    except Exception as _rag_exc:
+        logger.warning("RAG context injection failed: %s", _rag_exc)
+
     gemini_client = GeminiLive(
         api_key=GEMINI_API_KEY,
         model=_CURRENT_MODEL,
         input_sample_rate=16000,
-        system_instruction=SYSTEM_PROMPT,
+        system_instruction=effective_prompt,
         voice_name=_CURRENT_VOICE,
         tools=ALL_TOOLS,
         tool_mapping=_session_tool_mapping,
@@ -583,6 +711,19 @@ async def websocket_endpoint(websocket: WebSocket):
         ):
             if not event:
                 continue
+
+            # Save transcription events to chat history
+            evt_type = event.get("type", "")
+            if evt_type == "user" and event.get("text"):
+                try:
+                    await chat_history.save_message(session_id, "user", event["text"])
+                except Exception as _ce:
+                    logger.warning("ChatHistory save user msg failed: %s", _ce)
+            elif evt_type == "gemini" and event.get("text"):
+                try:
+                    await chat_history.save_message(session_id, "assistant", event["text"])
+                except Exception as _ce:
+                    logger.warning("ChatHistory save assistant msg failed: %s", _ce)
 
             if event.get("type") == "tool_call":
                 name = event.get("name")

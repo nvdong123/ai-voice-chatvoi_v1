@@ -5,3 +5,16 @@ websockets
 python-dotenv
 python-multipart
 httpx
+# RAG
+langchain-community
+langchain-google-genai
+langchain
+chromadb
+pypdf
+python-docx
+docx2txt
+pandas
+openpyxl
+unstructured
+# Chat history
+firebase-admin

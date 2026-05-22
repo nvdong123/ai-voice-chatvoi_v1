@@ -615,7 +615,7 @@ async def history_list(
         limit=limit,
         project=project or None,
     )
-    return JSONResponse(sessions)
+    return JSONResponse({"sessions": sessions})
 
 
 @app.get("/admin/history/{session_id}")

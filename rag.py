@@ -50,7 +50,10 @@ class RAGEngine:
 
     def _init_vectorstore(self) -> None:
         from langchain_google_genai import GoogleGenerativeAIEmbeddings
-        from langchain_community.vectorstores import Chroma
+        try:
+            from langchain_chroma import Chroma
+        except ImportError:
+            from langchain_community.vectorstores import Chroma
 
         self._embeddings = GoogleGenerativeAIEmbeddings(
             model="models/text-embedding-004",

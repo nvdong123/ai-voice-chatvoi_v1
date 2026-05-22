@@ -10,6 +10,7 @@ langchain-community
 langchain-google-genai
 langchain
 langchain-text-splitters
+langchain-chroma
 chromadb
 pypdf
 python-docx

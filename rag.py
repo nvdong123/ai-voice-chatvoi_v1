@@ -112,7 +112,7 @@ class RAGEngine:
     def ingest_file(self, file_path: Path, filename: str) -> dict:
         """Ingest a document into the vector store. Returns stats dict."""
         if not self.enabled or self._vectorstore is None:
-            return {"chunks_added": 0, "filename": filename, "error": "RAG not enabled"}
+            return {"chunks": 0, "filename": filename, "error": "RAG not enabled"}
 
         try:
             try:
@@ -137,10 +137,10 @@ class RAGEngine:
 
             self._vectorstore.add_documents(chunks)
             logger.info("RAG ingested '%s': %d chunks", filename, len(chunks))
-            return {"chunks_added": len(chunks), "filename": filename}
+            return {"chunks": len(chunks), "filename": filename}
         except Exception as exc:
             logger.error("RAG ingest error for '%s': %s", filename, exc)
-            return {"chunks_added": 0, "filename": filename, "error": str(exc)}
+            return {"chunks": 0, "filename": filename, "error": str(exc)}
 
     def delete_file(self, filename: str) -> dict:
         """Remove all chunks for a given source filename."""

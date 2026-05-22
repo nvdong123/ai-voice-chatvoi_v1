@@ -538,7 +538,7 @@ async def delete_node(node_id: str, _: None = Depends(verify_admin)):
 async def rag_list_documents(request: Request, _: None = Depends(verify_admin)):
     if not _is_api_request(request):
         return _spa_response()
-    return JSONResponse(rag_engine.list_documents())
+    return JSONResponse({"documents": rag_engine.list_documents()})
 
 
 @app.post("/admin/rag/upload")

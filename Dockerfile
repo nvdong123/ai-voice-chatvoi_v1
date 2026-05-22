@@ -29,5 +29,6 @@ COPY --from=admin-builder /build/admin-dist ./admin-dist
 
 EXPOSE 8000
 
-RUN chmod +x /app/entrypoint.sh
+# Normalize line endings (Windows CRLF → LF) then make executable
+RUN sed -i 's/\r//' /app/entrypoint.sh && chmod +x /app/entrypoint.sh
 CMD ["/app/entrypoint.sh"]

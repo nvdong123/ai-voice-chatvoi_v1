@@ -7,7 +7,7 @@ python-multipart
 httpx
 # RAG
 langchain-community
-langchain-google-genai
+langchain-google-genai>=2.0.0
 langchain
 langchain-text-splitters
 langchain-chroma

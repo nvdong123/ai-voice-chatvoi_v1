@@ -56,7 +56,8 @@ class RAGEngine:
             from langchain_community.vectorstores import Chroma
 
         self._embeddings = GoogleGenerativeAIEmbeddings(
-            model="models/text-embedding-004",
+            model=os.getenv("RAG_EMBEDDING_MODEL", "models/text-embedding-004"),
+            google_api_key=os.getenv("GEMINI_API_KEY", ""),
             google_api_key=_GEMINI_API_KEY,
         )
         self._vectorstore = Chroma(

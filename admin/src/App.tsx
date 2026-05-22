@@ -7,6 +7,8 @@ import LoginPage from './pages/LoginPage';
 import PromptPage from './pages/PromptPage';
 import ConfigPage from './pages/ConfigPage';
 import ScenesPage from './pages/ScenesPage';
+import RAGPage from './pages/RAGPage';
+import HistoryPage from './pages/HistoryPage';
 
 export default function App() {
   return (
@@ -26,6 +28,8 @@ export default function App() {
             <Route path="prompt" element={<PromptPage />} />
             <Route path="config" element={<ConfigPage />} />
             <Route path="scenes" element={<ScenesPage />} />
+            <Route path="rag" element={<RAGPage />} />
+            <Route path="history" element={<HistoryPage />} />
           </Route>
         </Routes>
       </BrowserRouter>

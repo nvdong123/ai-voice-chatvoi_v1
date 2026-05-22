@@ -1,11 +1,13 @@
-import { FileText, Settings, LogOut, Map } from 'lucide-react';
+import { FileText, Settings, LogOut, Map, BookOpen, MessageSquare } from 'lucide-react';
 import { NavLink } from 'react-router-dom';
 import { useAuth } from '../hooks/useAuth';
 
 const NAV_ITEMS = [
-  { to: '/prompt',  label: 'System Prompt', Icon: FileText },
-  { to: '/config',  label: 'Cấu hình AI',   Icon: Settings },
-  { to: '/scenes',  label: 'Scenes',         Icon: Map },
+  { to: '/prompt',  label: 'System Prompt',  Icon: FileText },
+  { to: '/config',  label: 'Cấu hình AI',    Icon: Settings },
+  { to: '/scenes',  label: 'Scenes',          Icon: Map },
+  { to: '/rag',     label: 'Tài liệu RAG',   Icon: BookOpen },
+  { to: '/history', label: 'Lịch sử chat',   Icon: MessageSquare },
 ] as const;
 
 export default function Sidebar() {

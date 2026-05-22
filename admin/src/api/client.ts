@@ -97,6 +97,43 @@ export const adminApi = {
     request<{ ok: boolean }>(`/admin/scenes/${encodeURIComponent(id)}`, {
       method: 'DELETE',
     }),
+
+  // ─── RAG documents ────────────────────────────────────────────────────────
+  getRagDocuments: () =>
+    request<{ documents: RagDocument[] }>('/admin/rag/documents'),
+
+  uploadRagDocument: (file: File) => {
+    const form = new FormData();
+    form.append('file', file);
+    return fetch('/admin/rag/upload', {
+      method: 'POST',
+      headers: { 'X-Admin-Token': getToken() },
+      body: form,
+    }).then(async (res) => {
+      const data = await res.json().catch(() => ({ error: res.statusText })) as Record<string, unknown>;
+      if (!res.ok) throw new ApiError(String(data['error'] ?? 'Lỗi tải lên'), res.status);
+      return data as { filename: string; chunks: number };
+    });
+  },
+
+  deleteRagDocument: (filename: string) =>
+    request<{ ok: boolean }>(`/admin/rag/documents/${encodeURIComponent(filename)}`, {
+      method: 'DELETE',
+    }),
+
+  // ─── Chat history ─────────────────────────────────────────────────────────
+  getHistorySessions: () =>
+    request<{ sessions: HistorySession[] }>('/admin/history'),
+
+  getHistorySession: (sessionId: string) =>
+    request<{ session_id: string; messages: HistoryMessage[] }>(
+      `/admin/history/${encodeURIComponent(sessionId)}`
+    ),
+
+  deleteHistorySession: (sessionId: string) =>
+    request<{ ok: boolean }>(`/admin/history/${encodeURIComponent(sessionId)}`, {
+      method: 'DELETE',
+    }),
 };
 
 // ─── Shared types ─────────────────────────────────────────────────────────────
@@ -118,4 +155,23 @@ export interface Scene {
   status?: string;      /* available | reserved | sold */
   legal?: string;       /* Sổ hồng lâu dài… */
   handover?: string;    /* Quý bàn giao */
+}
+
+export interface RagDocument {
+  filename: string;
+  chunks: number;
+  size_bytes?: number;
+}
+
+export interface HistorySession {
+  session_id: string;
+  project?: string;
+  message_count: number;
+  updated_at: string;
+}
+
+export interface HistoryMessage {
+  role: string;
+  text: string;
+  ts: string;
 }

@@ -20,9 +20,14 @@ RUN pip install --no-cache-dir -r requirements.txt
 # App source
 COPY . .
 
+# Seed data — stored separately so a volume mount on /app/data doesn't
+# shadow the bundled scenes.json / nodes.json on first deploy.
+COPY data/ /app/data_seed/
+
 # Copy pre-built admin UI from stage 1
 COPY --from=admin-builder /build/admin-dist ./admin-dist
 
 EXPOSE 8000
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]
+RUN chmod +x /app/entrypoint.sh
+CMD ["/app/entrypoint.sh"]

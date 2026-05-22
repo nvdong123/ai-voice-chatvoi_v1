@@ -92,7 +92,10 @@ class RAGEngine:
             return {"chunks_added": 0, "filename": filename, "error": "RAG not enabled"}
 
         try:
-            from langchain.text_splitter import RecursiveCharacterTextSplitter
+            try:
+                from langchain_text_splitters import RecursiveCharacterTextSplitter
+            except ImportError:
+                from langchain.text_splitter import RecursiveCharacterTextSplitter
 
             docs = self._load_file(file_path)
             splitter = RecursiveCharacterTextSplitter(

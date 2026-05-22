@@ -24,6 +24,26 @@ _CHROMA_DIR       = Path(os.getenv("RAG_CHROMA_DIR", "./data/chroma_db"))
 _GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
 
 
+class _GeminiEmbeddings:
+    """LangChain-compatible embeddings via google-genai SDK (uses v1 API, not v1beta)."""
+
+    def __init__(self, model: str, api_key: str) -> None:
+        from google import genai
+        self._client = genai.Client(api_key=api_key)
+        self._model = model
+
+    def embed_documents(self, texts: list) -> list:
+        results = []
+        for text in texts:
+            resp = self._client.models.embed_content(model=self._model, contents=text)
+            results.append(resp.embeddings[0].values)
+        return results
+
+    def embed_query(self, text: str) -> list:
+        resp = self._client.models.embed_content(model=self._model, contents=text)
+        return resp.embeddings[0].values
+
+
 class RAGEngine:
     """Manages document ingestion and context retrieval for Gemini sessions."""
 
@@ -49,15 +69,15 @@ class RAGEngine:
     # ── private ───────────────────────────────────────────────────────────────
 
     def _init_vectorstore(self) -> None:
-        from langchain_google_genai import GoogleGenerativeAIEmbeddings
         try:
             from langchain_chroma import Chroma
         except ImportError:
             from langchain_community.vectorstores import Chroma
 
-        self._embeddings = GoogleGenerativeAIEmbeddings(
-            model=os.getenv("RAG_EMBEDDING_MODEL", "models/text-embedding-004"),
-            google_api_key=os.getenv("GEMINI_API_KEY", _GEMINI_API_KEY),
+        model = os.getenv("RAG_EMBEDDING_MODEL", "models/text-embedding-004")
+        self._embeddings = _GeminiEmbeddings(
+            model=model,
+            api_key=os.getenv("GEMINI_API_KEY", _GEMINI_API_KEY),
         )
         self._vectorstore = Chroma(
             collection_name="rag_docs",

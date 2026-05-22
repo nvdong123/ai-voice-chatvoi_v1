@@ -208,6 +208,72 @@ def verify_admin(
     )
 
 
+# ─── Landing page ─────────────────────────────────────────────────────────────
+_LANDING_HTML = """<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="UTF-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>AI Voice Chatbot — BĐS</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{min-height:100vh;background:#0d1117;color:#e2e8f0;font-family:'Segoe UI',system-ui,sans-serif;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+  .card{background:#161b22;border:1px solid rgba(255,255,255,.08);border-radius:16px;padding:48px 40px;max-width:480px;width:100%;text-align:center;box-shadow:0 24px 64px rgba(0,0,0,.5)}
+  .icon{width:64px;height:64px;border-radius:18px;background:linear-gradient(135deg,#2dd4bf,#06b6d4);display:flex;align-items:center;justify-content:center;margin:0 auto 24px;font-size:28px}
+  h1{font-size:1.75rem;font-weight:700;letter-spacing:-.02em;color:#f1f5f9;margin-bottom:8px}
+  .sub{color:#64748b;font-size:.9rem;line-height:1.6;margin-bottom:32px}
+  .btn{display:inline-flex;align-items:center;gap:8px;background:linear-gradient(135deg,#2dd4bf,#06b6d4);color:#0d1117;font-weight:600;font-size:.9rem;padding:12px 28px;border-radius:10px;text-decoration:none;transition:opacity .2s}
+  .btn:hover{opacity:.88}
+  .divider{border:none;border-top:1px solid rgba(255,255,255,.06);margin:32px 0}
+  .info{display:grid;grid-template-columns:1fr 1fr;gap:12px;text-align:left}
+  .info-item{background:rgba(255,255,255,.03);border:1px solid rgba(255,255,255,.06);border-radius:10px;padding:14px 16px}
+  .info-label{font-size:.7rem;text-transform:uppercase;letter-spacing:.06em;color:#475569;margin-bottom:4px}
+  .info-value{font-size:.82rem;color:#94a3b8;font-family:monospace;word-break:break-all}
+  .dot{display:inline-block;width:7px;height:7px;border-radius:50%;background:#34d399;margin-right:6px;box-shadow:0 0 6px #34d399}
+  .status{font-size:.78rem;color:#34d399;margin-bottom:32px}
+  footer{margin-top:40px;font-size:.75rem;color:#334155}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="icon">🏠</div>
+  <h1>AI Voice Chatbot</h1>
+  <p class="sub">Trợ lý giọng nói thông minh cho dự án bất động sản.<br/>Tích hợp VR 360° &amp; Gemini Live AI.</p>
+  <p class="status"><span class="dot"></span>Backend đang hoạt động</p>
+  <a href="/admin/" class="btn">
+    <svg width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+    Vào Admin Panel
+  </a>
+  <hr class="divider"/>
+  <div class="info">
+    <div class="info-item">
+      <div class="info-label">WebSocket</div>
+      <div class="info-value">wss://[host]/ws</div>
+    </div>
+    <div class="info-item">
+      <div class="info-label">API Docs</div>
+      <div class="info-value">/docs</div>
+    </div>
+    <div class="info-item">
+      <div class="info-label">Health</div>
+      <div class="info-value">/admin/api/health</div>
+    </div>
+    <div class="info-item">
+      <div class="info-label">Admin</div>
+      <div class="info-value">/admin/</div>
+    </div>
+  </div>
+</div>
+<footer>Powered by Gemini Live · FastAPI · ChromaDB</footer>
+</body>
+</html>"""
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
+async def landing_page():
+    return HTMLResponse(_LANDING_HTML)
+
+
 # ─── Admin auth endpoints ──────────────────────────────────────────────────────
 @app.post("/admin/login")
 async def admin_login(request: Request):

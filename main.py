@@ -889,12 +889,11 @@ async def websocket_endpoint(websocket: WebSocket):
 
     receive_task = asyncio.create_task(receive_from_client())
 
-    # ── Transcript buffers — accumulate partial chunks, flush on turn_complete ──
-    _user_buffer: list   = []
+    # ── Transcript buffers — accumulate gemini partial chunks, flush on turn_complete ──
     _gemini_buffer: list = []
 
     async def run_session():
-        nonlocal _user_buffer, _gemini_buffer
+        nonlocal _gemini_buffer
         async for event in gemini_client.start_session(
             audio_input_queue=audio_input_queue,
             video_input_queue=video_input_queue,
@@ -907,15 +906,25 @@ async def websocket_endpoint(websocket: WebSocket):
 
             evt_type = event.get("type", "")
 
-            # Accumulate partial transcriptions — flush only on turn_complete
+            # User transcription: Gemini Live sends input_transcription as a
+            # complete utterance (not streaming), so save immediately rather
+            # than buffering — it may arrive AFTER turn_complete.
             if evt_type == "user" and event.get("text"):
-                _user_buffer.append(event["text"])
+                _user_text = event["text"].strip()
+                if _user_text:
+                    try:
+                        await chat_history.save_message(
+                            session_id, "user", _user_text,
+                            client_id=client_id,
+                        )
+                    except Exception as _ce:
+                        logger.warning("ChatHistory save user msg failed: %s", _ce)
 
             elif evt_type == "gemini" and event.get("text"):
                 _gemini_buffer.append(event["text"])
 
             elif evt_type == "turn_complete":
-                # Flush gemini buffer first (response already finished)
+                # Flush gemini buffer (AI response complete)
                 if _gemini_buffer:
                     full_text = " ".join(_gemini_buffer).strip()
                     _gemini_buffer.clear()
@@ -926,17 +935,6 @@ async def websocket_endpoint(websocket: WebSocket):
                         )
                     except Exception as _ce:
                         logger.warning("ChatHistory save assistant msg failed: %s", _ce)
-                # Flush user buffer
-                if _user_buffer:
-                    full_text = " ".join(_user_buffer).strip()
-                    _user_buffer.clear()
-                    try:
-                        await chat_history.save_message(
-                            session_id, "user", full_text,
-                            client_id=client_id,
-                        )
-                    except Exception as _ce:
-                        logger.warning("ChatHistory save user msg failed: %s", _ce)
 
             elif evt_type == "interrupted":
                 # AI was cut off — save partial response marked as interrupted

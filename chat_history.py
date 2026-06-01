@@ -88,6 +88,8 @@ class ChatHistory:
         session_id: str,
         role: str,
         text: str,
+        client_id: str = "",
+        title: str = "",
     ) -> None:
         """Append a message to the session document."""
         if not self.enabled or not text.strip():
@@ -111,10 +113,16 @@ class ChatHistory:
                     "messages": ArrayUnion([message]),
                 })
             else:
+                # Auto-generate title from first message text
+                auto_title = title or (
+                    (text[:40] + "...") if len(text) > 40 else text
+                )
                 doc_ref.set({
                     "created_at": now,
                     "updated_at": now,
                     "project": _PROJECT_NAME,
+                    "client_id": client_id,
+                    "title": auto_title,
                     "messages": [message],
                 })
         except Exception as exc:
@@ -161,8 +169,33 @@ class ChatHistory:
             logger.error("ChatHistory.list_sessions error: %s", exc)
             return []
 
-    async def delete_session(self, session_id: str) -> bool:
-        """Delete a session document from Firestore."""
+    async def list_sessions_by_client(self, client_id: str, limit: int = 20) -> list:
+        """Return recent sessions for a specific client_id, ordered by updated_at desc."""
+        if not self.enabled or not client_id:
+            return []
+        try:
+            query = (
+                self._db.collection(_COLLECTION)
+                .where("client_id", "==", client_id)
+                .order_by("updated_at", direction="DESCENDING")
+                .limit(limit)
+            )
+            sessions = []
+            for doc in query.stream():
+                data = doc.to_dict()
+                sessions.append({
+                    "session_id": doc.id,
+                    "title": data.get("title", ""),
+                    "created_at": data.get("created_at", ""),
+                    "updated_at": data.get("updated_at", ""),
+                    "message_count": len(data.get("messages", [])),
+                })
+            return sessions
+        except Exception as exc:
+            logger.error("ChatHistory.list_sessions_by_client error: %s", exc)
+            return []
+
+    async def delete_session(self, session_id: str) -> bool:        """Delete a session document from Firestore."""
         if not self.enabled:
             return False
         try:

@@ -515,6 +515,30 @@ async def api_ws_token(request: Request):
     return JSONResponse({"token": token, "expires_in": 900})
 
 
+@app.get("/api/sessions")
+async def api_list_sessions(client_id: str = ""):
+    """Public — list recent sessions for a client_id (max 20)."""
+    if not client_id:
+        return JSONResponse([])
+    try:
+        sessions = await chat_history.list_sessions_by_client(client_id, limit=20)
+        return JSONResponse(sessions)
+    except Exception as exc:
+        logger.warning("api_list_sessions error: %s", exc)
+        return JSONResponse([])
+
+
+@app.get("/api/sessions/{session_id}")
+async def api_get_session(session_id: str):
+    """Public — get messages for a specific session."""
+    try:
+        messages = await chat_history.get_history(session_id)
+        return JSONResponse({"session_id": session_id, "messages": messages})
+    except Exception as exc:
+        logger.warning("api_get_session error: %s", exc)
+        return JSONResponse({"session_id": session_id, "messages": []})
+
+
 # ─── Admin CRUD: scenes ───────────────────────────────────────────────────────
 @app.get("/admin/scenes")
 async def list_scenes(request: Request, _: None = Depends(verify_admin)):
@@ -742,6 +766,7 @@ async def websocket_endpoint(websocket: WebSocket):
     session_id: str = (
         websocket.query_params.get("session_id") or secrets.token_urlsafe(16)
     )
+    client_id: str = websocket.query_params.get("client_id", "")
 
     await websocket.accept()
     logger.info("WebSocket connection accepted (session=%s)", session_id)
@@ -859,7 +884,12 @@ async def websocket_endpoint(websocket: WebSocket):
 
     receive_task = asyncio.create_task(receive_from_client())
 
+    # ── Transcript buffers — accumulate partial chunks, flush on turn_complete ──
+    _user_buffer: list   = []
+    _gemini_buffer: list = []
+
     async def run_session():
+        nonlocal _user_buffer, _gemini_buffer
         async for event in gemini_client.start_session(
             audio_input_queue=audio_input_queue,
             video_input_queue=video_input_queue,
@@ -870,18 +900,52 @@ async def websocket_endpoint(websocket: WebSocket):
             if not event:
                 continue
 
-            # Save transcription events to chat history
             evt_type = event.get("type", "")
+
+            # Accumulate partial transcriptions — flush only on turn_complete
             if evt_type == "user" and event.get("text"):
-                try:
-                    await chat_history.save_message(session_id, "user", event["text"])
-                except Exception as _ce:
-                    logger.warning("ChatHistory save user msg failed: %s", _ce)
+                _user_buffer.append(event["text"])
+
             elif evt_type == "gemini" and event.get("text"):
-                try:
-                    await chat_history.save_message(session_id, "assistant", event["text"])
-                except Exception as _ce:
-                    logger.warning("ChatHistory save assistant msg failed: %s", _ce)
+                _gemini_buffer.append(event["text"])
+
+            elif evt_type == "turn_complete":
+                # Flush gemini buffer first (response already finished)
+                if _gemini_buffer:
+                    full_text = " ".join(_gemini_buffer).strip()
+                    _gemini_buffer.clear()
+                    try:
+                        await chat_history.save_message(
+                            session_id, "assistant", full_text,
+                            client_id=client_id,
+                        )
+                    except Exception as _ce:
+                        logger.warning("ChatHistory save assistant msg failed: %s", _ce)
+                # Flush user buffer
+                if _user_buffer:
+                    full_text = " ".join(_user_buffer).strip()
+                    _user_buffer.clear()
+                    try:
+                        await chat_history.save_message(
+                            session_id, "user", full_text,
+                            client_id=client_id,
+                        )
+                    except Exception as _ce:
+                        logger.warning("ChatHistory save user msg failed: %s", _ce)
+
+            elif evt_type == "interrupted":
+                # AI was cut off — save partial response marked as interrupted
+                if _gemini_buffer:
+                    full_text = " ".join(_gemini_buffer).strip()
+                    _gemini_buffer.clear()
+                    if full_text:
+                        try:
+                            await chat_history.save_message(
+                                session_id, "assistant", full_text + " [bị ngắt]",
+                                client_id=client_id,
+                            )
+                        except Exception as _ce:
+                            logger.warning("ChatHistory save interrupted msg failed: %s", _ce)
 
             # Per-turn RAG injection: on user speech, query RAG and inject context
             if evt_type == "user":

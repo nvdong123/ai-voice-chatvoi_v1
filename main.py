@@ -197,7 +197,12 @@ app = FastAPI(title="Real Estate AI Chatbot Backend")
 # Update CORS origins with your actual deployment domains
 _CORS_ORIGINS = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 if not _CORS_ORIGINS:
-    _CORS_ORIGINS = ["http://localhost:3000", "http://localhost:5173", "http://localhost:8080"]
+    _CORS_ORIGINS = [
+        "http://localhost:3000",
+        "http://localhost:5173",
+        "http://localhost:8080",
+        "https://haivanbay.gomenu.vn",
+    ]
 
 app.add_middleware(
     CORSMiddleware,

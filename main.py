@@ -875,12 +875,28 @@ async def websocket_endpoint(websocket: WebSocket):
                                     actual = (part.get("text") or "").strip()
                                     if actual:
                                         await text_input_queue.put(actual)
+                                        # Save user text message immediately
+                                        try:
+                                            await chat_history.save_message(
+                                                session_id, "user", actual,
+                                                client_id=client_id,
+                                            )
+                                        except Exception as _ce:
+                                            logger.warning("ChatHistory save user text failed: %s", _ce)
                             continue
 
                     except (json.JSONDecodeError, Exception):
                         pass
 
                     await text_input_queue.put(text)
+                    # Plain-text fallback (non-JSON messages)
+                    try:
+                        await chat_history.save_message(
+                            session_id, "user", text.strip(),
+                            client_id=client_id,
+                        )
+                    except Exception as _ce:
+                        logger.warning("ChatHistory save user plain-text failed: %s", _ce)
 
         except WebSocketDisconnect:
             logger.info("WebSocket disconnected")

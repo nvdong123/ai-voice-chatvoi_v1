@@ -121,9 +121,13 @@ class RAGEngine:
                 from langchain.text_splitter import RecursiveCharacterTextSplitter
 
             docs = self._load_file(file_path)
+            # separators tuned for real-estate documents (bullet lists, numbered items).
+            # NOTE: files ingested before this change retain old chunk boundaries;
+            #       re-upload them to apply the new settings.
             splitter = RecursiveCharacterTextSplitter(
                 chunk_size=_RAG_CHUNK_SIZE,
                 chunk_overlap=_RAG_CHUNK_OVERLAP,
+                separators=["\n\n", "\n", "•", "-", ".", " "],
             )
             chunks = splitter.split_documents(docs)
 

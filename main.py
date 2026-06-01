@@ -130,6 +130,67 @@ def _check_admin_token(token: str) -> bool:
         return False
 
 
+# ─── In-memory rate limiter ────────────────────────────────────────────────────
+_rate_limits: dict[str, list[float]] = {}
+
+
+def _check_rate_limit(key: str, max_requests: int, window_sec: int) -> bool:
+    """Return True if within limit, False if exceeded."""
+    now = time.time()
+    bucket = _rate_limits.get(key, [])
+    bucket = [ts for ts in bucket if now - ts < window_sec]
+    if len(bucket) >= max_requests:
+        _rate_limits[key] = bucket
+        return False
+    bucket.append(now)
+    _rate_limits[key] = bucket
+    return True
+
+
+def _get_client_ip(request: Request) -> str:
+    """Get client IP from X-Forwarded-For or request.client.host."""
+    forwarded = request.headers.get("X-Forwarded-For", "")
+    if forwarded:
+        return forwarded.split(",")[0].strip()
+    return request.client.host if request.client else "unknown"
+
+
+# ─── WebSocket short-lived token auth ─────────────────────────────────────────
+_WS_AUTH_ENABLED: bool = os.getenv("WS_AUTH_ENABLED", "true").lower() == "true"
+_WS_TOKEN_TTL_MS: int  = 15 * 60 * 1000  # 15 minutes
+
+
+def _gen_ws_token() -> str:
+    expiry = str(int(time.time() * 1000) + _WS_TOKEN_TTL_MS)
+    sig = _hmac.new(
+        GEMINI_API_KEY.encode("utf-8"),
+        expiry.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    return f"{expiry}.{sig}"
+
+
+def _verify_ws_token(token: str) -> bool:
+    """Return True if the WS token is valid. Always True when auth is disabled."""
+    if not _WS_AUTH_ENABLED:
+        return True
+    if not token or "." not in token:
+        return False
+    dot = token.rfind(".")
+    expiry, sig = token[:dot], token[dot + 1:]
+    expected = _hmac.new(
+        GEMINI_API_KEY.encode("utf-8"),
+        expiry.encode("utf-8"),
+        hashlib.sha256,
+    ).hexdigest()
+    try:
+        if not _hmac.compare_digest(sig, expected):
+            return False
+        return int(time.time() * 1000) <= int(expiry)
+    except Exception:
+        return False
+
+
 # ─── FastAPI app ──────────────────────────────────────────────────────────────
 app = FastAPI(title="Real Estate AI Chatbot Backend")
 
@@ -277,6 +338,12 @@ async def landing_page():
 # ─── Admin auth endpoints ──────────────────────────────────────────────────────
 @app.post("/admin/login")
 async def admin_login(request: Request):
+    ip = _get_client_ip(request)
+    if not _check_rate_limit(f"login:{ip}", 5, 300):
+        return JSONResponse(
+            {"error": "Too many requests", "retry_after": 300},
+            status_code=429,
+        )
     try:
         body = await request.json()
     except Exception:
@@ -435,6 +502,19 @@ async def public_nodes():
     return JSONResponse(_read_json(NODES_FILE))
 
 
+@app.post("/api/ws-token")
+async def api_ws_token(request: Request):
+    """Issue a short-lived WebSocket token (valid 15 min). Public endpoint."""
+    ip = _get_client_ip(request)
+    if not _check_rate_limit(f"wstoken:{ip}", 10, 60):
+        return JSONResponse(
+            {"error": "Too many requests", "retry_after": 60},
+            status_code=429,
+        )
+    token = _gen_ws_token()
+    return JSONResponse({"token": token, "expires_in": 900})
+
+
 # ─── Admin CRUD: scenes ───────────────────────────────────────────────────────
 @app.get("/admin/scenes")
 async def list_scenes(request: Request, _: None = Depends(verify_admin)):
@@ -546,6 +626,12 @@ async def rag_upload(
     request: Request,
     _: None = Depends(verify_admin),
 ):
+    ip = _get_client_ip(request)
+    if not _check_rate_limit(f"upload:{ip}", 5, 60):
+        return JSONResponse(
+            {"error": "Too many requests", "retry_after": 60},
+            status_code=429,
+        )
     from fastapi import UploadFile
     import shutil
 
@@ -646,6 +732,12 @@ async def admin_spa_fallback(full_path: str, request: Request):
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     """WebSocket endpoint for Gemini Live AI voice chat."""
+    # Verify WS token before accepting the connection
+    ws_token = websocket.query_params.get("token", "")
+    if not _verify_ws_token(ws_token):
+        await websocket.close(code=4001, reason="Unauthorized")
+        return
+
     # Resolve or create session ID
     session_id: str = (
         websocket.query_params.get("session_id") or secrets.token_urlsafe(16)
@@ -689,11 +781,11 @@ async def websocket_endpoint(websocket: WebSocket):
         "get_pano_nodeid": _get_pano_nodeid_session,
     }
 
-    # Inject RAG context into system prompt for this session
+    # Inject RAG context into system prompt for this session (summary only)
     effective_prompt = SYSTEM_PROMPT
     try:
         if rag_engine.has_documents():
-            rag_ctx = rag_engine.get_all_context()
+            rag_ctx = rag_engine.get_all_context(max_chunks=3)
             if rag_ctx:
                 effective_prompt = SYSTEM_PROMPT + "\n\n" + rag_ctx
     except Exception as _rag_exc:
@@ -790,6 +882,32 @@ async def websocket_endpoint(websocket: WebSocket):
                     await chat_history.save_message(session_id, "assistant", event["text"])
                 except Exception as _ce:
                     logger.warning("ChatHistory save assistant msg failed: %s", _ce)
+
+            # Per-turn RAG injection: on user speech, query RAG and inject context
+            if evt_type == "user":
+                _transcript = event.get("text", "")
+                if _transcript and len(_transcript) > 5 and rag_engine.has_documents():
+                    async def _inject_rag(_t=_transcript):
+                        try:
+                            _rag_ctx = await asyncio.wait_for(
+                                asyncio.get_event_loop().run_in_executor(
+                                    None, rag_engine.query, _t, 5
+                                ),
+                                timeout=2.0,
+                            )
+                            if _rag_ctx:
+                                await text_input_queue.put(
+                                    f"[NGỮ CẢNH TÀI LIỆU CHO CÂU HỎI NÀY]\n{_rag_ctx}"
+                                )
+                                logger.info(
+                                    "[RAG] Injected %d chars for: %s",
+                                    len(_rag_ctx), _t[:50],
+                                )
+                        except asyncio.TimeoutError:
+                            logger.warning("[RAG] Query timeout for: %s", _t[:50])
+                        except Exception as _re:
+                            logger.warning("[RAG] Per-turn injection failed: %s", _re)
+                    asyncio.create_task(_inject_rag())
 
             if event.get("type") == "tool_call":
                 name = event.get("name")

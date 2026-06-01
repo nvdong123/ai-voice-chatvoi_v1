@@ -195,7 +195,8 @@ class ChatHistory:
             logger.error("ChatHistory.list_sessions_by_client error: %s", exc)
             return []
 
-    async def delete_session(self, session_id: str) -> bool:        """Delete a session document from Firestore."""
+    async def delete_session(self, session_id: str) -> bool:
+        """Delete a session document from Firestore."""
         if not self.enabled:
             return False
         try:

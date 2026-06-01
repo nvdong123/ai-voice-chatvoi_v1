@@ -174,11 +174,12 @@ class ChatHistory:
         if not self.enabled or not client_id:
             return []
         try:
+            # No order_by to avoid requiring a composite Firestore index;
+            # sort in-process instead.
             query = (
                 self._db.collection(_COLLECTION)
                 .where("client_id", "==", client_id)
-                .order_by("updated_at", direction="DESCENDING")
-                .limit(limit)
+                .limit(limit * 3)  # over-fetch so we still get `limit` after sort
             )
             sessions = []
             for doc in query.stream():
@@ -190,7 +191,8 @@ class ChatHistory:
                     "updated_at": data.get("updated_at", ""),
                     "message_count": len(data.get("messages", [])),
                 })
-            return sessions
+            sessions.sort(key=lambda s: s["updated_at"] or "", reverse=True)
+            return sessions[:limit]
         except Exception as exc:
             logger.error("ChatHistory.list_sessions_by_client error: %s", exc)
             return []

@@ -126,14 +126,40 @@ class RAGEngine:
             from langchain_community.document_loaders.csv_loader import CSVLoader
             loader = CSVLoader(str(file_path))
         elif ext in (".xlsx", ".xls"):
-            from langchain_community.document_loaders import UnstructuredExcelLoader
-            loader = UnstructuredExcelLoader(str(file_path))
+            return self._load_excel(file_path)
         elif ext == ".txt":
             from langchain_community.document_loaders import TextLoader
             loader = TextLoader(str(file_path), encoding="utf-8")
         else:
             raise ValueError(f"Unsupported file type: {ext}")
         return loader.load()
+
+    def _load_excel(self, file_path: Path) -> list:
+        """Load Excel sheets without the heavy unstructured dependency."""
+        import pandas as pd
+        from langchain_core.documents import Document
+
+        sheets = pd.read_excel(file_path, sheet_name=None, dtype=str).items()
+        docs = []
+        for sheet_name, frame in sheets:
+            frame = frame.fillna("")
+            lines = []
+            headers = [str(col) for col in frame.columns]
+            for _, row in frame.iterrows():
+                values = [str(row.get(col, "")).strip() for col in frame.columns]
+                pairs = [
+                    f"{header}: {value}"
+                    for header, value in zip(headers, values)
+                    if value
+                ]
+                if pairs:
+                    lines.append("; ".join(pairs))
+            if lines:
+                docs.append(Document(
+                    page_content="\n".join(lines),
+                    metadata={"source": str(file_path), "sheet": str(sheet_name)},
+                ))
+        return docs
 
     # ── public ────────────────────────────────────────────────────────────────
 

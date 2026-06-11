@@ -10,6 +10,7 @@ import json
 import logging
 import os
 import shutil
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -63,6 +64,13 @@ class RAGEngine:
         _RAG_DOCS_DIR.mkdir(parents=True, exist_ok=True)
         _CHROMA_DIR.mkdir(parents=True, exist_ok=True)
 
+        if self._chroma_store_needs_rebuild():
+            logger.warning("RAGEngine detected incompatible Chroma store; rebuilding before init")
+            if not self._rebuild_vectorstore():
+                logger.warning("RAGEngine rebuild failed — RAG disabled")
+                self.enabled = False
+            return
+
         try:
             self._init_vectorstore()
             self._ensure_default_status()
@@ -76,6 +84,7 @@ class RAGEngine:
     # ── private ───────────────────────────────────────────────────────────────
 
     def _init_vectorstore(self) -> None:
+        self._reset_chroma_cache()
         try:
             from langchain_chroma import Chroma
         except ImportError:
@@ -92,9 +101,40 @@ class RAGEngine:
             persist_directory=str(_CHROMA_DIR),
         )
 
+    def _reset_chroma_cache(self) -> None:
+        """Clear Chroma's process-level client cache after a failed persistent init."""
+        try:
+            from chromadb.api.shared_system_client import SharedSystemClient
+
+            for attr in ("_identifier_to_system", "_identifier_to_systems"):
+                cache = getattr(SharedSystemClient, attr, None)
+                if isinstance(cache, dict):
+                    cache.clear()
+        except Exception:
+            return
+
+    def _chroma_store_needs_rebuild(self) -> bool:
+        """Detect persisted Chroma stores that cannot be opened by the pinned runtime."""
+        sqlite_file = _CHROMA_DIR / "chroma.sqlite3"
+        if not sqlite_file.exists():
+            return False
+        try:
+            with sqlite3.connect(f"file:{sqlite_file}?mode=ro", uri=True) as conn:
+                names = {
+                    row[0]
+                    for row in conn.execute(
+                        "select name from sqlite_master where type='table'"
+                    )
+                }
+            return "tenants" not in names or "databases" not in names
+        except sqlite3.Error as exc:
+            logger.warning("RAGEngine cannot read Chroma sqlite store: %s", exc)
+            return True
+
     def _rebuild_vectorstore(self) -> bool:
         """Recover from incompatible/corrupt Chroma state by rebuilding from source docs."""
         self._vectorstore = None
+        self._reset_chroma_cache()
         backup_dir = None
         try:
             if _CHROMA_DIR.exists() and any(_CHROMA_DIR.iterdir()):
@@ -102,6 +142,7 @@ class RAGEngine:
                 backup_dir = _CHROMA_DIR.with_name(f"{_CHROMA_DIR.name}.bak-{stamp}")
                 shutil.move(str(_CHROMA_DIR), str(backup_dir))
                 logger.warning("Moved existing Chroma store to %s", backup_dir)
+            self._reset_chroma_cache()
             _CHROMA_DIR.mkdir(parents=True, exist_ok=True)
             self._init_vectorstore()
             rebuilt = self._reingest_source_documents()

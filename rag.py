@@ -63,7 +63,7 @@ class RAGEngine:
             self._init_vectorstore()
             self._ensure_default_status()
             logger.info("RAGEngine initialised (chroma_dir=%s)", _CHROMA_DIR)
-        except Exception as exc:
+        except BaseException as exc:
             logger.warning("RAGEngine init failed — RAG disabled: %s", exc)
             self.enabled = False
 

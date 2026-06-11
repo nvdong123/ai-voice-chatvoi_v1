@@ -9,6 +9,7 @@ Gracefully degrades when disabled or no documents present.
 import json
 import logging
 import os
+import shutil
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
@@ -22,6 +23,9 @@ _RAG_CHUNK_SIZE   = int(os.getenv("RAG_CHUNK_SIZE", "500"))
 _RAG_CHUNK_OVERLAP = int(os.getenv("RAG_CHUNK_OVERLAP", "50"))
 _CHROMA_DIR       = Path(os.getenv("RAG_CHROMA_DIR", "./data/chroma_db"))
 _GEMINI_API_KEY   = os.getenv("GEMINI_API_KEY", "")
+_SUPPORTED_EXTENSIONS = {".pdf", ".docx", ".csv", ".xlsx", ".xls", ".txt"}
+
+os.environ.setdefault("ANONYMIZED_TELEMETRY", "False")
 
 
 class _GeminiEmbeddings:
@@ -64,8 +68,10 @@ class RAGEngine:
             self._ensure_default_status()
             logger.info("RAGEngine initialised (chroma_dir=%s)", _CHROMA_DIR)
         except BaseException as exc:
-            logger.warning("RAGEngine init failed — RAG disabled: %s", exc)
-            self.enabled = False
+            logger.warning("RAGEngine init failed; rebuilding vector store: %s", exc)
+            if not self._rebuild_vectorstore():
+                logger.warning("RAGEngine rebuild failed — RAG disabled")
+                self.enabled = False
 
     # ── private ───────────────────────────────────────────────────────────────
 
@@ -85,6 +91,44 @@ class RAGEngine:
             embedding_function=self._embeddings,
             persist_directory=str(_CHROMA_DIR),
         )
+
+    def _rebuild_vectorstore(self) -> bool:
+        """Recover from incompatible/corrupt Chroma state by rebuilding from source docs."""
+        self._vectorstore = None
+        backup_dir = None
+        try:
+            if _CHROMA_DIR.exists() and any(_CHROMA_DIR.iterdir()):
+                stamp = datetime.now(timezone.utc).strftime("%Y%m%d%H%M%S")
+                backup_dir = _CHROMA_DIR.with_name(f"{_CHROMA_DIR.name}.bak-{stamp}")
+                shutil.move(str(_CHROMA_DIR), str(backup_dir))
+                logger.warning("Moved existing Chroma store to %s", backup_dir)
+            _CHROMA_DIR.mkdir(parents=True, exist_ok=True)
+            self._init_vectorstore()
+            rebuilt = self._reingest_source_documents()
+            self._ensure_default_status()
+            logger.info("RAGEngine rebuilt (files=%d, chroma_dir=%s)", rebuilt, _CHROMA_DIR)
+            return True
+        except BaseException as exc:
+            logger.error("RAGEngine rebuild error: %s", exc)
+            if backup_dir and backup_dir.exists() and not _CHROMA_DIR.exists():
+                shutil.move(str(backup_dir), str(_CHROMA_DIR))
+            return False
+
+    def _reingest_source_documents(self) -> int:
+        """Recreate vectors from files that are still present in the RAG docs folder."""
+        if self._vectorstore is None or not _RAG_DOCS_DIR.exists():
+            return 0
+
+        rebuilt = 0
+        for file_path in sorted(_RAG_DOCS_DIR.iterdir()):
+            if not file_path.is_file() or file_path.suffix.lower() not in _SUPPORTED_EXTENSIONS:
+                continue
+            result = self.ingest_file(file_path, file_path.name, status="approved")
+            if not result.get("error"):
+                rebuilt += 1
+            else:
+                logger.warning("RAG rebuild skipped '%s': %s", file_path.name, result.get("error"))
+        return rebuilt
 
     def _ensure_default_status(self) -> None:
         """Backfill status for chunks ingested before the review workflow existed."""

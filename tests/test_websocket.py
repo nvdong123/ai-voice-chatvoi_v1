@@ -19,6 +19,11 @@ from starlette.testclient import TestClient
 
 # ─── Mock GeminiLive helpers ──────────────────────────────────────────────────
 
+def _ws_path(path="/ws"):
+    import main
+    sep = "&" if "?" in path else "?"
+    return f"{path}{sep}token={main._gen_ws_token()}"
+
 def _make_mock_gemini_class(extra_events=None):
     """
     Return a GeminiLive replacement whose start_session is an async generator
@@ -47,7 +52,7 @@ def test_ws_receives_session_info():
     MockGemini = _make_mock_gemini_class()
     with patch("main.GeminiLive", MockGemini):
         client = TestClient(__import__("main").app)
-        with client.websocket_connect("/ws") as ws:
+        with client.websocket_connect(_ws_path()) as ws:
             msg = ws.receive_json()
 
     assert msg["type"] == "session_info"
@@ -62,7 +67,7 @@ def test_ws_custom_session_id():
     MockGemini = _make_mock_gemini_class()
     with patch("main.GeminiLive", MockGemini):
         client = TestClient(__import__("main").app)
-        with client.websocket_connect("/ws?session_id=my-custom-id") as ws:
+        with client.websocket_connect(_ws_path("/ws?session_id=my-custom-id")) as ws:
             msg = ws.receive_json()
 
     assert msg["type"] == "session_info"
@@ -77,7 +82,7 @@ def test_ws_auto_session_id():
     MockGemini = _make_mock_gemini_class()
     with patch("main.GeminiLive", MockGemini):
         client = TestClient(__import__("main").app)
-        with client.websocket_connect("/ws") as ws:
+        with client.websocket_connect(_ws_path()) as ws:
             msg = ws.receive_json()
 
     assert msg["type"] == "session_info"
@@ -99,7 +104,7 @@ def test_ws_rag_context_injected(monkeypatch):
 
     with patch("main.GeminiLive", MockGemini):
         client = TestClient(main.app)
-        with client.websocket_connect("/ws") as ws:
+        with client.websocket_connect(_ws_path()) as ws:
             ws.receive_json()  # session_info
 
     system_instruction = MockGemini._last_init_kwargs.get("system_instruction", "")
@@ -119,7 +124,7 @@ def test_ws_rag_disabled_uses_original_prompt(monkeypatch):
 
     with patch("main.GeminiLive", MockGemini):
         client = TestClient(main.app)
-        with client.websocket_connect("/ws") as ws:
+        with client.websocket_connect(_ws_path()) as ws:
             ws.receive_json()
 
     system_instruction = MockGemini._last_init_kwargs.get("system_instruction", "")
@@ -144,7 +149,7 @@ def test_ws_rag_error_does_not_crash(monkeypatch):
     with patch("main.GeminiLive", MockGemini):
         client = TestClient(main.app)
         # Must not raise — WebSocket should still be accepted
-        with client.websocket_connect("/ws") as ws:
+        with client.websocket_connect(_ws_path()) as ws:
             msg = ws.receive_json()
 
     assert msg["type"] == "session_info"
@@ -168,7 +173,7 @@ def test_ws_chat_history_error_does_not_crash(monkeypatch):
 
     with patch("main.GeminiLive", MockGemini):
         client = TestClient(main.app)
-        with client.websocket_connect("/ws") as ws:
+        with client.websocket_connect(_ws_path()) as ws:
             session_msg = ws.receive_json()   # session_info
             user_msg = ws.receive_json()      # forwarded user event
 

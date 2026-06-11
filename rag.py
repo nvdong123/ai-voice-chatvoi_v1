@@ -61,6 +61,7 @@ class RAGEngine:
 
         try:
             self._init_vectorstore()
+            self._ensure_default_status()
             logger.info("RAGEngine initialised (chroma_dir=%s)", _CHROMA_DIR)
         except Exception as exc:
             logger.warning("RAGEngine init failed — RAG disabled: %s", exc)
@@ -84,6 +85,33 @@ class RAGEngine:
             embedding_function=self._embeddings,
             persist_directory=str(_CHROMA_DIR),
         )
+
+    def _ensure_default_status(self) -> None:
+        """Backfill status for chunks ingested before the review workflow existed."""
+        if self._vectorstore is None:
+            return
+        try:
+            col = self._vectorstore._collection
+            result = col.get(include=["metadatas", "documents"])
+            ids = result.get("ids", [])
+            metadatas = result.get("metadatas") or []
+            documents = result.get("documents") or []
+            update_ids = []
+            update_docs = []
+            update_metadatas = []
+            for doc_id, doc, meta in zip(ids, documents, metadatas):
+                if (meta or {}).get("status"):
+                    continue
+                next_meta = dict(meta or {})
+                next_meta["status"] = "approved"
+                update_ids.append(doc_id)
+                update_docs.append(doc)
+                update_metadatas.append(next_meta)
+            if update_ids:
+                col.update(ids=update_ids, documents=update_docs, metadatas=update_metadatas)
+                logger.info("RAG backfilled status=approved for %d existing chunks", len(update_ids))
+        except Exception as exc:
+            logger.warning("RAG status backfill skipped: %s", exc)
 
     def _load_file(self, file_path: Path) -> list:
         """Return list of LangChain Document objects from a file."""
@@ -109,7 +137,7 @@ class RAGEngine:
 
     # ── public ────────────────────────────────────────────────────────────────
 
-    def ingest_file(self, file_path: Path, filename: str) -> dict:
+    def ingest_file(self, file_path: Path, filename: str, status: str = "approved") -> dict:
         """Ingest a document into the vector store. Returns stats dict."""
         if not self.enabled or self._vectorstore is None:
             return {"chunks": 0, "filename": filename, "error": "RAG not enabled"}
@@ -137,11 +165,12 @@ class RAGEngine:
                     "source": filename,
                     "uploaded_at": now,
                     "file_type": file_path.suffix.lower().lstrip("."),
+                    "status": status,
                 })
 
             self._vectorstore.add_documents(chunks)
             logger.info("RAG ingested '%s': %d chunks", filename, len(chunks))
-            return {"chunks": len(chunks), "filename": filename}
+            return {"chunks": len(chunks), "chunks_added": len(chunks), "filename": filename}
         except Exception as exc:
             logger.error("RAG ingest error for '%s': %s", filename, exc)
             return {"chunks": 0, "filename": filename, "error": str(exc)}
@@ -180,6 +209,7 @@ class RAGEngine:
                         "chunks": 0,
                         "uploaded_at": m.get("uploaded_at", ""),
                         "file_type": m.get("file_type", ""),
+                        "status": m.get("status", "approved"),
                     }
                 docs[src]["chunks"] += 1
 
@@ -193,16 +223,55 @@ class RAGEngine:
         if not self.enabled or self._vectorstore is None:
             return False
         try:
+            try:
+                result = self._vectorstore._collection.get(
+                    where={"status": {"$in": ["approved", "published"]}},
+                    limit=1,
+                )
+                ids = result.get("ids")
+                if isinstance(ids, list):
+                    return bool(ids)
+            except Exception:
+                pass
             return self._vectorstore._collection.count() > 0
         except Exception:
             return False
+
+    def set_document_status(self, filename: str, status: str) -> dict:
+        """Update review status for all chunks belonging to one uploaded document."""
+        if status not in {"draft", "pending", "pending_review", "approved", "published", "archived"}:
+            return {"updated": 0, "filename": filename, "error": "invalid_status"}
+        if not self.enabled or self._vectorstore is None:
+            return {"updated": 0, "filename": filename}
+        try:
+            col = self._vectorstore._collection
+            result = col.get(where={"source": filename}, include=["metadatas", "documents"])
+            ids = result.get("ids", [])
+            metadatas = result.get("metadatas") or []
+            documents = result.get("documents") or []
+            if not ids:
+                return {"updated": 0, "filename": filename}
+            new_metadatas = []
+            for meta in metadatas:
+                next_meta = dict(meta or {})
+                next_meta["status"] = status
+                new_metadatas.append(next_meta)
+            col.update(ids=ids, metadatas=new_metadatas, documents=documents)
+            return {"updated": len(ids), "filename": filename, "status": status}
+        except Exception as exc:
+            logger.error("RAG set_document_status error for '%s': %s", filename, exc)
+            return {"updated": 0, "filename": filename, "error": str(exc)}
 
     def query(self, question: str, k: int = 5) -> str:
         """Similarity-search and return formatted context string."""
         if not self.enabled or self._vectorstore is None or not question.strip():
             return ""
         try:
-            results = self._vectorstore.similarity_search(question, k=k)
+            results = self._vectorstore.similarity_search(
+                question,
+                k=k,
+                filter={"status": {"$in": ["approved", "published"]}},
+            )
             if not results:
                 return ""
             parts = [doc.page_content for doc in results]
@@ -219,6 +288,7 @@ class RAGEngine:
             col = self._vectorstore._collection
             result = col.get(
                 include=["documents", "metadatas"],
+                where={"status": {"$in": ["approved", "published"]}},
                 limit=max_chunks,
             )
             documents = result.get("documents") or []

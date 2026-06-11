@@ -14,6 +14,7 @@ import logging
 import os
 import secrets
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
@@ -544,6 +545,150 @@ async def api_get_session(session_id: str):
         return JSONResponse({"session_id": session_id, "messages": []})
 
 
+# ─── Conversations API compatibility (lightweight metadata + messages) ──────
+@app.post("/conversations")
+async def create_conversation(request: Request):
+    """Create a new conversation metadata entry. Stores metadata as JSON under DATA_DIR/conversations."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    requested_id = (body.get("id") or body.get("session_id") or "").strip()
+    conv_id = requested_id or f"conv_{secrets.token_urlsafe(12)}"
+    conv = {
+        "id": conv_id,
+        "session_id": conv_id,
+        "project_id": body.get("project_id", ""),
+        "sales_site_id": body.get("sales_site_id", ""),
+        "visitor_id": body.get("visitor_id", ""),
+        "started_at": datetime.now(timezone.utc).isoformat(),
+        "ended_at": None,
+        "intent_score": 0,
+        "summary": "",
+    }
+    outdir = DATA_DIR / "conversations"
+    outdir.mkdir(parents=True, exist_ok=True)
+    outpath = outdir / f"{conv['id']}.json"
+    try:
+        _write_json(outpath, conv)
+    except Exception as exc:
+        logger.warning("create_conversation write failed: %s", exc)
+        raise HTTPException(status_code=500, detail="failed_to_create")
+    return JSONResponse(conv, status_code=201)
+
+
+@app.post("/conversations/{conv_id}/messages")
+async def post_conversation_message(conv_id: str, request: Request):
+    """Append a message to a conversation — delegated to ChatHistory (session storage)."""
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    role = body.get("role") or "user"
+    content = body.get("content") or body.get("text") or ""
+    if not content.strip():
+        raise HTTPException(status_code=400, detail="empty_message")
+    session_id = conv_id
+    try:
+        await chat_history.save_message(session_id, role, content, client_id=body.get("visitor_id", ""))
+    except Exception as exc:
+        logger.warning("post_conversation_message save failed: %s", exc)
+        raise HTTPException(status_code=500, detail="save_failed")
+    msg = {"id": f"msg_{secrets.token_urlsafe(6)}", "conversation_id": session_id, "role": role, "content": content, "created_at": datetime.now(timezone.utc).isoformat()}
+    return JSONResponse(msg, status_code=201)
+
+
+@app.get("/conversations")
+async def list_conversations(scope: str = "all", sales_site_id: str = "", visitor_id: str = ""):
+    """List conversation metadata files.
+
+    Optional query params:
+      - scope=all|team|own
+      - sales_site_id (required for scope=team)
+      - visitor_id (required for scope=own)
+    """
+    outdir = DATA_DIR / "conversations"
+    if not outdir.exists():
+        return JSONResponse([])
+    items = []
+    try:
+        for p in sorted(outdir.iterdir(), reverse=True):
+            try:
+                doc = _read_json(p)
+                items.append(doc)
+            except Exception:
+                continue
+    except Exception as exc:
+        logger.warning("list_conversations error: %s", exc)
+        return JSONResponse([])
+
+    if scope == 'team' and sales_site_id:
+        items = [c for c in items if c.get('sales_site_id') == sales_site_id]
+    elif scope == 'own' and visitor_id:
+        items = [c for c in items if c.get('visitor_id') == visitor_id]
+
+    return JSONResponse(items)
+
+
+@app.get("/conversations/{conv_id}/messages")
+async def get_conversation_messages(conv_id: str):
+    """Return messages for a conversation (delegates to ChatHistory storage)."""
+    try:
+        messages = await chat_history.get_history(conv_id)
+        return JSONResponse({"session_id": conv_id, "messages": messages})
+    except Exception as exc:
+        logger.warning("get_conversation_messages error: %s", exc)
+        return JSONResponse({"session_id": conv_id, "messages": []})
+
+
+@app.get("/conversations/{conv_id}")
+async def get_conversation_metadata(conv_id: str):
+    """Return conversation metadata if present in DATA_DIR/conversations."""
+    outpath = DATA_DIR / "conversations" / f"{conv_id}.json"
+    if not outpath.exists():
+        return JSONResponse({"error": "not_found"}, status_code=404)
+    try:
+        data = _read_json(outpath)
+        return JSONResponse(data)
+    except Exception as exc:
+        logger.warning("get_conversation_metadata error: %s", exc)
+        return JSONResponse({"error": "read_failed"}, status_code=500)
+
+
+async def _record_token_usage_payload(body: dict):
+    usages_file = DATA_DIR / "token_usages.json"
+    us = _read_json(usages_file, default=[])
+    entry = {**body, "timestamp": datetime.now(timezone.utc).isoformat()}
+    us.append(entry)
+    try:
+        _write_json(usages_file, us)
+    except Exception as exc:
+        logger.warning("record_token_usage write failed: %s", exc)
+        raise HTTPException(status_code=500, detail="write_failed")
+    return entry
+
+
+# ─── Token usages (lightweight recording) — stores to DATA_DIR/token_usages.json
+@app.post("/token_usages")
+async def record_token_usage(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    entry = await _record_token_usage_payload(body)
+    return JSONResponse(entry, status_code=201)
+
+
+@app.post("/token-usages")
+async def record_token_usage_alias(request: Request):
+    try:
+        body = await request.json()
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid JSON")
+    entry = await _record_token_usage_payload(body)
+    return JSONResponse(entry, status_code=201)
+
+
 # ─── Admin CRUD: scenes ───────────────────────────────────────────────────────
 @app.get("/admin/scenes")
 async def list_scenes(request: Request, _: None = Depends(verify_admin)):
@@ -650,11 +795,7 @@ async def rag_list_documents(request: Request, _: None = Depends(verify_admin)):
     return JSONResponse({"documents": rag_engine.list_documents()})
 
 
-@app.post("/admin/rag/upload")
-async def rag_upload(
-    request: Request,
-    _: None = Depends(verify_admin),
-):
+async def _handle_rag_upload(request: Request, default_status: str = "approved"):
     ip = _get_client_ip(request)
     if not _check_rate_limit(f"upload:{ip}", 5, 60):
         return JSONResponse(
@@ -662,7 +803,6 @@ async def rag_upload(
             status_code=429,
         )
     from fastapi import UploadFile
-    import shutil
 
     MAX_BYTES = 20 * 1024 * 1024  # 20 MB
     ALLOWED_EXTS = {".pdf", ".docx", ".csv", ".xlsx", ".xls", ".txt"}
@@ -680,6 +820,10 @@ async def rag_upload(
             detail=f"Unsupported file type '{ext}'. Allowed: {', '.join(sorted(ALLOWED_EXTS))}",
         )
 
+    requested_status = str(form.get("status") or default_status)
+    if requested_status not in {"draft", "pending", "pending_review", "approved", "published"}:
+        requested_status = default_status
+
     dest_dir = _Path(os.getenv("RAG_DOCS_DIR", "./data/rag_docs"))
     dest_dir.mkdir(parents=True, exist_ok=True)
     dest = dest_dir / (file.filename or "upload")
@@ -696,8 +840,40 @@ async def rag_upload(
                 raise HTTPException(status_code=413, detail="File exceeds 20 MB limit")
             out.write(chunk)
 
-    result = rag_engine.ingest_file(dest, file.filename or dest.name)
+    try:
+        result = rag_engine.ingest_file(dest, file.filename or dest.name, status=requested_status)
+    except TypeError:
+        # Backward compatibility for older tests/extensions that monkeypatch
+        # ingest_file(file_path, filename) without the status parameter.
+        result = rag_engine.ingest_file(dest, file.filename or dest.name)
     return JSONResponse(result, status_code=201)
+
+
+@app.post("/admin/rag/upload")
+async def rag_upload(
+    request: Request,
+    _: None = Depends(verify_admin),
+):
+    return await _handle_rag_upload(request, default_status="approved")
+
+
+@app.post("/knowledge/upload")
+async def knowledge_upload(request: Request, _: None = Depends(verify_admin)):
+    return await _handle_rag_upload(request, default_status="pending")
+
+
+@app.post("/knowledge-chunks/{filename:path}/approve")
+async def knowledge_chunk_approve(filename: str, _: None = Depends(verify_admin)):
+    result = rag_engine.set_document_status(filename, "approved")
+    status_code = 404 if result.get("updated", 0) == 0 and "error" not in result else 200
+    return JSONResponse(result, status_code=status_code)
+
+
+@app.post("/knowledge/{filename:path}/publish")
+async def knowledge_publish(filename: str, _: None = Depends(verify_admin)):
+    result = rag_engine.set_document_status(filename, "published")
+    status_code = 404 if result.get("updated", 0) == 0 and "error" not in result else 200
+    return JSONResponse(result, status_code=status_code)
 
 
 @app.delete("/admin/rag/documents/{filename:path}")
@@ -815,7 +991,10 @@ async def websocket_endpoint(websocket: WebSocket):
     effective_prompt = SYSTEM_PROMPT
     try:
         if rag_engine.has_documents():
-            rag_ctx = rag_engine.get_all_context(max_chunks=3)
+            try:
+                rag_ctx = rag_engine.get_all_context(max_chunks=3)
+            except TypeError:
+                rag_ctx = rag_engine.get_all_context()
             if rag_ctx:
                 effective_prompt = SYSTEM_PROMPT + "\n\n" + rag_ctx
     except Exception as _rag_exc:

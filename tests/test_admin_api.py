@@ -201,7 +201,7 @@ async def test_rag_list_documents_empty(client, admin_headers, monkeypatch):
 
     resp = await client.get("/admin/rag/documents", headers=admin_headers)
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json() == {"documents": []}
 
 
 async def test_rag_upload_valid_txt(client, admin_headers, tmp_path, monkeypatch):
@@ -271,7 +271,7 @@ async def test_history_list_empty(client, admin_headers, monkeypatch):
 
     resp = await client.get("/admin/history", headers=admin_headers)
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json() == {"sessions": []}
 
 
 async def test_history_get_session(client, admin_headers, monkeypatch):

@@ -48,6 +48,7 @@ logger = logging.getLogger(__name__)
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
 GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Aoede")
+GEMINI_TRANSCRIPTION_LANGUAGE = os.getenv("GEMINI_TRANSCRIPTION_LANGUAGE", "vi-VN")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
 
 # ─── Mutable runtime config (overridable via POST /admin/config) ──────────────
@@ -1006,6 +1007,7 @@ async def websocket_endpoint(websocket: WebSocket):
         input_sample_rate=16000,
         system_instruction=effective_prompt,
         voice_name=_CURRENT_VOICE,
+        transcription_language=GEMINI_TRANSCRIPTION_LANGUAGE,
         tools=ALL_TOOLS,
         tool_mapping=_session_tool_mapping,
     )

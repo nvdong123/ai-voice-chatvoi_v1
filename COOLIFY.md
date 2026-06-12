@@ -30,7 +30,6 @@ Vào tab **Environment Variables** và thêm:
 | `GEMINI_API_KEY` | API key từ [Google AI Studio](https://aistudio.google.com/apikey) | ✅ |
 | `GEMINI_MODEL` | `gemini-2.0-flash-live-001` | ✅ |
 | `GEMINI_VOICE` | `Aoede` | ✅ |
-| `GEMINI_TRANSCRIPTION_LANGUAGE` | `vi-VN` | ✅ |
 | `ADMIN_PASSWORD` | Mật khẩu bất kỳ (tự đặt) | ✅ |
 | `CORS_ORIGINS` | Domain frontend (xem bên dưới) | ✅ |
 | `DATA_DIR` | (để trống — dùng mặc định `/app/data`) | ❌ |

@@ -43,7 +43,6 @@ class GeminiLive:
         input_sample_rate: int,
         system_instruction: str = "",
         voice_name: str = "Aoede",
-        transcription_language: str = "vi-VN",
         tools: list = None,
         tool_mapping: dict = None,
     ):
@@ -52,7 +51,6 @@ class GeminiLive:
         self.input_sample_rate = input_sample_rate
         self.system_instruction = system_instruction
         self.voice_name = voice_name
-        self.transcription_language = transcription_language
         self.client = genai.Client(api_key=api_key)
         self.tools = tools or []
         self.tool_mapping = tool_mapping or {}
@@ -79,12 +77,8 @@ class GeminiLive:
             )
             if self.system_instruction
             else None,
-            input_audio_transcription=types.AudioTranscriptionConfig(
-                languageCodes=[self.transcription_language],
-            ),
-            output_audio_transcription=types.AudioTranscriptionConfig(
-                languageCodes=[self.transcription_language],
-            ),
+            input_audio_transcription=types.AudioTranscriptionConfig(),
+            output_audio_transcription=types.AudioTranscriptionConfig(),
             realtime_input_config=types.RealtimeInputConfig(
                 turn_coverage="TURN_INCLUDES_ONLY_ACTIVITY",
             ),

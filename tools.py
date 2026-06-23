@@ -110,6 +110,35 @@ def build_navigate_tool() -> types.Tool:
 
 
 # ══════════════════════════════════════════════════════════════════════════════
+#  open_vr360
+# ══════════════════════════════════════════════════════════════════════════════
+
+def open_vr360() -> dict:
+    """Request the client to open the configured VR360 tour URL."""
+    return {"result": "open_vr360"}
+
+
+def build_open_vr360_tool() -> types.Tool:
+    """Build the Gemini tool declaration for opening the full VR360 tour."""
+    return types.Tool(
+        function_declarations=[
+            types.FunctionDeclaration(
+                name="open_vr360",
+                description=(
+                    "Mở trang tham quan nhà mẫu VR360 trong tab mới. "
+                    "Gọi hàm này khi khách hàng muốn mở tour VR360 tổng thể, "
+                    "tham quan nhà mẫu, hoặc xem không gian VR mà chưa chọn một cảnh cụ thể."
+                ),
+                parameters=types.Schema(
+                    type=types.Type.OBJECT,
+                    properties={},
+                ),
+            )
+        ]
+    )
+
+
+# ══════════════════════════════════════════════════════════════════════════════
 #  get_property_info
 # ══════════════════════════════════════════════════════════════════════════════
 

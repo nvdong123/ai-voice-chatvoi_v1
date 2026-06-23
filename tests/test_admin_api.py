@@ -42,6 +42,15 @@ async def test_login_wrong_password(client, monkeypatch):
     assert resp.status_code == 401
 
 
+async def test_admin_service_token_allows_server_to_server_access(client, monkeypatch):
+    import main
+    monkeypatch.setattr(main, "ADMIN_PASSWORD", "secret")
+    monkeypatch.setattr(main, "ADMIN_SERVICE_TOKEN", "service-token")
+
+    resp = await client.get("/admin/prompt", headers={"X-Admin-Token": "service-token"})
+    assert resp.status_code == 200
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Prompt
 # ─────────────────────────────────────────────────────────────────────────────

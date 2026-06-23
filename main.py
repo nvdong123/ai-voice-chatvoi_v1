@@ -30,6 +30,7 @@ from rag import RAGEngine
 from chat_history import ChatHistory
 from tools import (
     build_navigate_tool, navigate_property_scene,
+    build_open_vr360_tool, open_vr360,
     build_get_property_info_tool, get_property_info,
     build_get_pano_nodeid_tool, get_pano_nodeid,
     build_add_memory_tool, SessionMemory,
@@ -49,6 +50,7 @@ GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 GEMINI_MODEL = os.getenv("GEMINI_MODEL", "gemini-3.1-flash-live-preview")
 GEMINI_VOICE = os.getenv("GEMINI_VOICE", "Aoede")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "")
+ADMIN_SERVICE_TOKEN = os.getenv("ADMIN_SERVICE_TOKEN", "").strip()
 
 # ─── Mutable runtime config (overridable via POST /admin/config) ──────────────
 _CURRENT_MODEL: str = GEMINI_MODEL
@@ -96,16 +98,18 @@ chat_history = ChatHistory()
 
 # ─── Tool setup ───────────────────────────────────────────────────────────────
 NAVIGATE_TOOL          = build_navigate_tool()
+OPEN_VR360_TOOL        = build_open_vr360_tool()
 GET_PROPERTY_INFO_TOOL = build_get_property_info_tool()
 GET_PANO_NODEID_TOOL   = build_get_pano_nodeid_tool()
 ADD_MEMORY_TOOL        = build_add_memory_tool()
 
 _GLOBAL_TOOL_MAPPING: dict = {
     "navigate_property_scene": navigate_property_scene,
+    "open_vr360":              open_vr360,
     "get_property_info":       get_property_info,
     "get_pano_nodeid":         get_pano_nodeid,
 }
-ALL_TOOLS = [NAVIGATE_TOOL, GET_PROPERTY_INFO_TOOL, GET_PANO_NODEID_TOOL, ADD_MEMORY_TOOL]
+ALL_TOOLS = [NAVIGATE_TOOL, OPEN_VR360_TOOL, GET_PROPERTY_INFO_TOOL, GET_PANO_NODEID_TOOL, ADD_MEMORY_TOOL]
 
 # ─── Token-based auth (HMAC stateless, survives restarts) ─────────────────────
 
@@ -118,6 +122,11 @@ def _gen_admin_token() -> str:
 def _check_admin_token(token: str) -> bool:
     if not ADMIN_PASSWORD:
         return True  # auth disabled
+    if ADMIN_SERVICE_TOKEN and token and secrets.compare_digest(
+        token.encode("utf-8"),
+        ADMIN_SERVICE_TOKEN.encode("utf-8"),
+    ):
+        return True
     if not token or "." not in token:
         return False
     dot = token.rfind(".")
@@ -1186,6 +1195,10 @@ async def websocket_endpoint(websocket: WebSocket):
                             "nodeId": node_id,
                             "sceneId": scene_id,
                         })
+
+                elif name == "open_vr360":
+                    logger.info("Sending open_vr360 request")
+                    await websocket.send_json({"type": "open_vr360"})
 
                 # add_to_memory → push memory_update to client
                 elif name == "add_to_memory":
